@@ -1,0 +1,29 @@
+# La versión del formato de docker-compose
+version: "3.9"
+
+services:
+  # Definimos un "servicio" llamado "db" que es nuestra base de datos
+  db:
+    # Usamos la imagen oficial de PostgreSQL con PostGIS ya incluido
+    # (no tenemos que instalar PostGIS aparte, ya viene adentro de esta imagen)
+    image: postgis/postgis:16-3.4
+
+    # Variables de entorno que PostgreSQL usa para configurarse al arrancar
+    environment:
+      POSTGRES_USER: ${DB_USER}          # lee la variable DB_USER del .env
+      POSTGRES_PASSWORD: ${DB_PASSWORD}  # lee DB_PASSWORD del .env
+      POSTGRES_DB: ${DB_NAME}            # lee DB_NAME del .env
+
+    # Mapea el puerto 5432 de Docker al puerto 5432 de tu máquina
+    # Formato: "puerto_en_tu_maquina:puerto_dentro_del_contenedor"
+    ports:
+      - "${DB_PORT:-5432}:5432" 
+
+    # Guarda los datos de la base de datos en un volumen persistente
+    # (si apagás Docker, los datos no se pierden)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+# Declaramos el volumen que usamos arriba
+volumes:
+  postgres_data:

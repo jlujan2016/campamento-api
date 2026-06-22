@@ -1,0 +1,54 @@
+[package]
+name = "campamento-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Axum: el framework web (maneja rutas HTTP, como Express en Node)
+axum = "0.7"
+
+# Tokio: el motor asíncrono de Rust (permite manejar muchas peticiones a la vez
+# sin bloquear el servidor mientras espera respuestas de la base de datos)
+tokio = { version = "1", features = ["full"] }
+
+# SQLx: para conectarse a PostgreSQL y ejecutar queries SQL
+# "runtime-tokio" = usa Tokio como motor asíncrono
+# "tls-rustls" = conexiones seguras sin depender de OpenSSL del sistema
+# "postgres" = soporte para PostgreSQL específicamente
+# "uuid", "chrono" = tipos de datos que vamos a usar en las tablas
+sqlx = { version = "0.7", features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+    "json"
+] }
+
+# Para manejar variables de entorno (ej. la contraseña de la base de datos
+# no se escribe directo en el código, se lee de un archivo .env)
+dotenvy = "0.15"
+
+# Para serializar/deserializar JSON (convertir datos Rust ↔ JSON)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Para manejar UUIDs (los IDs únicos de cada fila en la base de datos)
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Para manejar fechas y horas
+chrono = { version = "0.4", features = ["serde"] }
+
+# Para hashear contraseñas de forma segura (Argon2)
+argon2 = "0.5"
+
+# Para crear y verificar tokens JWT (autenticación)
+jsonwebtoken = "9"
+
+# Para manejar errores de forma más ergonómica en Rust
+thiserror = "1"
+anyhow = "1"
+
+# Para logging (registrar qué está pasando en el servidor)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

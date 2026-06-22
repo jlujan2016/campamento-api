@@ -1,0 +1,12 @@
+# Dependencias y compilados de Rust (pueden pesar cientos de MB)
+target/
+
+# Variables de entorno con credenciales reales — NUNCA subir
+.env
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+
+# VS Code (opcional, algunos prefieren subirlo para compartir configuración)
+.vscode/
