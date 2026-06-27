@@ -5,6 +5,7 @@ use uuid::Uuid;
 // Esta struct representa un usuario tal como está en la base de datos
 // #[derive(sqlx::FromRow)] le dice a SQLx cómo convertir una fila de DB
 // automáticamente a esta struct — mapea columna por columna por nombre
+#[allow(dead_code)]  // se va a usar cuando implementemos el panel de admin
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct User {
     pub id: Uuid,
