@@ -1,8 +1,8 @@
-// Declaramos los módulos que componen el proyecto
-// Rust busca src/config.rs, src/db.rs, etc.
 mod config;
 mod db;
 mod errors;
+mod models;
+mod auth;
 mod routes;
 
 use dotenvy::dotenv;
@@ -23,10 +23,10 @@ async fn main() {
         )
         .init();
 
-    // Lee la configuración del .env
+           // Lee la configuración del .env
     let config = config::Config::from_env();
 
-    // Crea el pool de conexiones a la base de datos
+     // Crea el pool de conexiones a la base de datos
     let pool = db::create_pool(&config.database_url).await;
     info!("✅ Conexión a la base de datos establecida");
 
@@ -38,10 +38,10 @@ async fn main() {
         .expect("Error al aplicar migraciones");
     info!("✅ Migraciones aplicadas");
 
-    // Construye el router con todas las rutas
-    let app = routes::create_router(pool);
+    // Construye el router con todas las rutas Pasamos también el jwt_secret al router
+    let app = routes::create_router(pool, config.jwt_secret);
 
-    // Arranca el servidor
+     // Arranca el servidor
     let addr = format!("0.0.0.0:{}", config.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
