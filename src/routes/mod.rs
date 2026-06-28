@@ -11,6 +11,8 @@ pub mod events;
 pub mod schedule;
 pub mod shifts;
 pub mod replacements;
+pub mod contributions;
+pub mod metrics;
 
 pub use auth::AuthState;
 
@@ -51,14 +53,29 @@ pub fn create_router(pool: PgPool, jwt_secret: String) -> Router {
         // Check-in / check-out
         .route("/shifts/:id/checkin", post(shifts::do_checkin))
         .route("/shifts/:id/checkout", post(shifts::do_checkout))
-        // Reemplazos
+        // Reemplazos y retiros
         .route("/shifts/:id/replacement", post(replacements::create_replacement))
         .route("/shifts/:id/replacement/:rid",
             put(replacements::respond_replacement))
         .route("/shifts/:id/mark-gap", post(replacements::mark_gap))
-        // Retiros
         .route("/events/:id/members/:uid/withdraw",
             post(replacements::withdraw_member))
+        // Aportes
+        .route("/events/:id/contribution-types",
+            get(contributions::list_contribution_types)
+            .post(contributions::create_contribution_type))
+        .route("/events/:id/contributions",
+            post(contributions::create_contribution))
+        .route("/contributions/:id/approve",
+            put(contributions::approve_contribution))
+        // Tramo final
+        .route("/events/:id/final-checkpoint",
+            post(contributions::create_final_checkpoint))
+        .route("/events/:id/final-checkpoint/attend",
+            post(contributions::attend_final_checkpoint))
+        // Métricas y ranking
+        .route("/events/:id/metrics", get(metrics::get_metrics))
+        .route("/events/:id/ranking", get(metrics::get_ranking))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth::require_auth,

@@ -4,3 +4,5 @@ pub mod event;
 pub mod schedule;
 pub mod shift;
 pub mod replacement;
+pub mod contribution;
+pub mod metrics;
