@@ -10,6 +10,7 @@ pub mod auth;
 pub mod events;
 pub mod schedule;
 pub mod shifts;
+pub mod replacements;
 
 pub use auth::AuthState;
 
@@ -23,7 +24,6 @@ pub fn create_router(pool: PgPool, jwt_secret: String) -> Router {
         .route("/health", get(health::health_handler))
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
-        // Rutas públicas del cronograma (sin autenticación)
         .route("/schedule/:token", get(schedule::public_schedule))
         .route("/schedule/:token/signup", post(schedule::guest_signup))
         .with_state(auth_state.clone());
@@ -47,9 +47,18 @@ pub fn create_router(pool: PgPool, jwt_secret: String) -> Router {
             get(shifts::list_my_shifts).post(shifts::create_extra_shift))
         .route("/events/:id/shifts/active", get(shifts::active_presence))
         .route("/events/:id/shifts/all", get(shifts::list_all_shifts))
+        .route("/events/:id/shifts/gaps", get(replacements::list_gaps))
         // Check-in / check-out
         .route("/shifts/:id/checkin", post(shifts::do_checkin))
         .route("/shifts/:id/checkout", post(shifts::do_checkout))
+        // Reemplazos
+        .route("/shifts/:id/replacement", post(replacements::create_replacement))
+        .route("/shifts/:id/replacement/:rid",
+            put(replacements::respond_replacement))
+        .route("/shifts/:id/mark-gap", post(replacements::mark_gap))
+        // Retiros
+        .route("/events/:id/members/:uid/withdraw",
+            post(replacements::withdraw_member))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth::require_auth,
