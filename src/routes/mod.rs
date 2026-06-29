@@ -3,6 +3,8 @@ use axum::{
     routing::{get, post, put},
     Router,
 };
+use axum::http::{header, Method, HeaderValue}; // 1. Módulos HTTP para configurar las cabeceras
+use tower_http::cors::CorsLayer;                // 2. Middleware de CORS de tower-http
 use sqlx::PgPool;
 
 mod health;
@@ -78,7 +80,18 @@ pub fn create_router(pool: PgPool, jwt_secret: String) -> Router {
         ))
         .with_state(auth_state);
 
+    // 3. Configuración estricta de la capa CORS para interactuar con React
+    let cors = CorsLayer::new()
+        .allow_origin([
+            "http://localhost:5173".parse::<HeaderValue>().unwrap(),
+            "http://192.168.100.95:5173".parse::<HeaderValue>().unwrap(),
+        ])
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS])
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
+
+    // 4. Se fusionan las rutas y se aplica el middleware globalmente al final
     Router::new()
         .merge(public_routes)
         .merge(protected_routes)
+        .layer(cors) 
 }

@@ -55,3 +55,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Cliente HTTP liviano para llamar a la API de Telegram
 reqwest = { version = "0.11", features = ["json"] }
+
+tower-http = { version = "0.5", features = ["cors"] }
