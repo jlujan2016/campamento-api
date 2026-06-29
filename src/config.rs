@@ -6,6 +6,7 @@ pub struct Config {
     pub database_url: String,
     pub jwt_secret: String,
     pub port: u16,
+    pub telegram_bot_token: Option<String>,
 }
 
 impl Config {
@@ -19,9 +20,10 @@ impl Config {
             jwt_secret: std::env::var("JWT_SECRET")
                 .expect("JWT_SECRET no está definida en .env"),
             port: std::env::var("PORT")
-                .unwrap_or_else(|_| "3000".to_string())  // si no existe, usa 3000
-                .parse()                                   // convierte String a número
+                .unwrap_or_else(|_| "3000".to_string())
+                .parse()
                 .expect("PORT debe ser un número válido"),
+            telegram_bot_token: std::env::var("TELEGRAM_BOT_TOKEN").ok(),
         }
     }
 }
