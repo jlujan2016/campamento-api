@@ -387,3 +387,44 @@ pub async fn attend_final_checkpoint(
 
     Ok((StatusCode::CREATED, Json(attendance)))
 }
+
+// GET /events/:id/contributions — listar aportes del evento (admin)
+pub async fn list_contributions(
+    State(state): State<AuthState>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+) -> Result<Json<Vec<ContributionWithDetails>>, AppError> {
+
+    let user_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| AppError::Unauthorized("Token inválido".to_string()))?;
+
+    crate::routes::events::verify_event_admin(
+        &state.pool, event_id, user_id, claims.is_super_admin
+    ).await?;
+
+    let contributions = sqlx::query_as!(
+        ContributionWithDetails,
+        r#"
+        SELECT
+            c.id, c.event_id, c.user_id,
+            u.name as user_name,
+            c.contribution_type_id,
+            ct.label as type_label,
+            c.description,
+            c.hour_bonus,
+            c.approved_by,
+            c.status,
+            c.created_at
+        FROM contributions c
+        JOIN users u ON u.id = c.user_id
+        JOIN contribution_types ct ON ct.id = c.contribution_type_id
+        WHERE c.event_id = $1
+        ORDER BY c.created_at DESC
+        "#,
+        event_id
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(contributions))
+}

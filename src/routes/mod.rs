@@ -62,7 +62,8 @@ pub fn create_router(pool: PgPool, jwt_secret: String) -> Router {
             get(contributions::list_contribution_types)
             .post(contributions::create_contribution_type))
         .route("/events/:id/contributions",
-            post(contributions::create_contribution))
+            get(contributions::list_contributions)
+            .post(contributions::create_contribution))            
         .route("/contributions/:id/approve",
             put(contributions::approve_contribution))
         .route("/events/:id/final-checkpoint",
@@ -74,6 +75,7 @@ pub fn create_router(pool: PgPool, jwt_secret: String) -> Router {
         // Telegram
         .route("/events/:id/telegram/group", post(telegram::link_group))
         .route("/telegram/link-account", post(telegram::link_account))
+        .route("/shifts/:id/approve", put(shifts::approve_shift))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth::require_auth,

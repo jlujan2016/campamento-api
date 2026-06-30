@@ -392,7 +392,6 @@ pub async fn list_all_shifts(
     let user_id = Uuid::parse_str(&claims.sub)
         .map_err(|_| AppError::Unauthorized("Token inválido".to_string()))?;
 
-    // Solo admins del evento o super admin
     crate::routes::events::verify_event_admin(
         &state.pool, event_id, user_id, claims.is_super_admin
     ).await?;
@@ -407,15 +406,15 @@ pub async fn list_all_shifts(
             s.scheduled_start,
             s.scheduled_end,
             s.status,
-            ci_in.timestamp as checkin_time,
-            ci_out.timestamp as checkout_time,
+            ci_in.timestamp as "checkin_time?",
+            ci_out.timestamp as "checkout_time?",
             CASE
                 WHEN ci_in.timestamp IS NOT NULL AND
                      EXTRACT(EPOCH FROM (ci_in.timestamp - s.scheduled_start))/60
                      > e.late_tolerance_minutes
                 THEN ci_in.timestamp + (s.scheduled_end - s.scheduled_start)
                 ELSE s.scheduled_end
-            END as "effective_end: DateTime<Utc>"
+            END as "effective_end?"
         FROM shifts s
         JOIN events e ON e.id = s.event_id
         JOIN users u ON u.id = s.user_id
@@ -431,4 +430,43 @@ pub async fn list_all_shifts(
     .await?;
 
     Ok(Json(shifts))
+}
+// PUT /shifts/:id/approve — aprobar turno extra (admin)
+pub async fn approve_shift(
+    State(state): State<AuthState>,
+    Extension(claims): Extension<Claims>,
+    Path(shift_id): Path<Uuid>,
+) -> Result<Json<Shift>, AppError> {
+
+    let user_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| AppError::Unauthorized("Token inválido".to_string()))?;
+
+    let shift = sqlx::query!(
+        "SELECT id, event_id, status, shift_type FROM shifts WHERE id = $1",
+        shift_id
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Turno no encontrado".to_string()))?;
+
+    if shift.shift_type != "extra" {
+        return Err(AppError::Validation(
+            "Solo se pueden aprobar turnos extra".to_string()
+        ));
+    }
+
+    crate::routes::events::verify_event_admin(
+        &state.pool, shift.event_id, user_id, claims.is_super_admin
+    ).await?;
+
+    let updated = sqlx::query_as!(
+        Shift,
+        "UPDATE shifts SET status = 'approved', approved_by = $1
+         WHERE id = $2 RETURNING *",
+        user_id, shift_id
+    )
+    .fetch_one(&state.pool)
+    .await?;
+
+    Ok(Json(updated))
 }
