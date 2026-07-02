@@ -409,16 +409,26 @@ pub async fn guest_signup(
     Json(req): Json<GuestSignupRequest>,
 ) -> Result<(StatusCode, Json<GuestSignupResponse>), AppError> {
 
-    // Validaciones básicas
     if req.name.is_empty() || req.phone.is_empty() {
-        return Err(AppError::Validation("Nombre y teléfono son requeridos".to_string()));
+        return Err(AppError::Validation(
+            "Nombre y teléfono son requeridos".to_string()
+        ));
     }
 
     if req.slot_ids.is_empty() {
-        return Err(AppError::Validation("Debes elegir al menos un slot".to_string()));
+        return Err(AppError::Validation(
+            "Debes elegir al menos un slot".to_string()
+        ));
     }
 
-    // Verificamos el enlace
+    // Si viene email, debe venir password también
+    if req.email.is_some() != req.password.is_some() {
+        return Err(AppError::Validation(
+            "Email y contraseña deben venir juntos".to_string()
+        ));
+    }
+
+    // Verificar el enlace
     let link = sqlx::query!(
         "SELECT event_id, expires_at FROM schedule_links WHERE token = $1",
         token
@@ -432,51 +442,114 @@ pub async fn guest_signup(
     }
 
     let mut tx = state.pool.begin().await?;
+    let mut is_new_account = false;
+    let mut jwt_token: Option<String> = None;
 
-    // Buscamos si ya existe un invitado con ese teléfono en este evento
-    // (para no crear duplicados si vuelve a usar el enlace)
-    let existing_user = sqlx::query!(
-        r#"
-        SELECT u.id FROM users u
-        JOIN event_members em ON em.user_id = u.id
-        WHERE u.phone = $1 AND u.is_guest = true AND em.event_id = $2
-        "#,
-        req.phone,
-        link.event_id
-    )
-    .fetch_optional(&mut *tx)
-    .await?;
+    // Determinar si crear cuenta completa o invitado
+    let user_id = if let (Some(email), Some(password)) = (&req.email, &req.password) {
 
-    let user_id = if let Some(existing) = existing_user {
-        // Ya existe, usamos el mismo usuario
-        existing.id
-    } else {
-        // Creamos un usuario invitado nuevo
+        // Verificar que el email no esté ya registrado
+        let existing_email = sqlx::query!(
+            "SELECT id FROM users WHERE email = $1",
+            email
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if existing_email.is_some() {
+            return Err(AppError::Validation(
+                "El email ya está registrado. Iniciá sesión en vez de registrarte.".to_string()
+            ));
+        }
+
+        if password.len() < 8 {
+            return Err(AppError::Validation(
+                "La contraseña debe tener al menos 8 caracteres".to_string()
+            ));
+        }
+
+        // Hashear la contraseña
+        let password_hash = crate::auth::hash_password(password)?;
+
+        // Crear cuenta completa (no invitado)
         let new_user = sqlx::query!(
             r#"
-            INSERT INTO users (name, phone, is_guest)
-            VALUES ($1, $2, true)
-            RETURNING id
+            INSERT INTO users (email, password_hash, name, phone, is_guest)
+            VALUES ($1, $2, $3, $4, false)
+            RETURNING id, is_super_admin
             "#,
+            email,
+            password_hash,
             req.name,
             req.phone,
         )
         .fetch_one(&mut *tx)
         .await?;
 
-        // Lo agregamos como participante del evento
-        sqlx::query!(
-            "INSERT INTO event_members (event_id, user_id, role) VALUES ($1, $2, 'participant')",
-            link.event_id,
+        is_new_account = true;
+
+        // Generar JWT para que quede logueada automáticamente
+        jwt_token = Some(crate::auth::generate_token(
             new_user.id,
+            new_user.is_super_admin,
+            &state.jwt_secret,
+        )?);
+
+        new_user.id
+
+    } else {
+        // Sin email/password — crear invitado (comportamiento anterior)
+        // Primero buscamos si ya existe un invitado con ese teléfono en este evento
+        let existing = sqlx::query!(
+            r#"
+            SELECT u.id FROM users u
+            JOIN event_members em ON em.user_id = u.id
+            WHERE u.phone = $1 AND u.is_guest = true AND em.event_id = $2
+            "#,
+            req.phone,
+            link.event_id
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if let Some(existing_user) = existing {
+            existing_user.id
+        } else {
+            let new_user = sqlx::query!(
+                r#"
+                INSERT INTO users (name, phone, is_guest)
+                VALUES ($1, $2, true)
+                RETURNING id
+                "#,
+                req.name,
+                req.phone,
+            )
+            .fetch_one(&mut *tx)
+            .await?;
+            new_user.id
+        }
+    };
+
+    // Agregar como miembro del evento si no lo es ya
+    let already_member = sqlx::query!(
+        "SELECT id FROM event_members WHERE event_id = $1 AND user_id = $2",
+        link.event_id, user_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    if already_member.is_none() {
+        sqlx::query!(
+            "INSERT INTO event_members (event_id, user_id, role)
+             VALUES ($1, $2, 'participant')",
+            link.event_id,
+            user_id,
         )
         .execute(&mut *tx)
         .await?;
+    }
 
-        new_user.id
-    };
-
-    // Procesamos cada slot elegido (misma lógica que signup_slots)
+    // Inscribir en los slots elegidos
     let mut signup_ids = Vec::new();
 
     for slot_id in &req.slot_ids {
@@ -489,10 +562,13 @@ pub async fn guest_signup(
         )
         .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("Slot {} no encontrado", slot_id)))?;
+        .ok_or_else(|| AppError::NotFound(
+            format!("Slot {} no encontrado", slot_id)
+        ))?;
 
         let current_count = sqlx::query!(
-            "SELECT COUNT(*) as count FROM slot_signups WHERE slot_id = $1 AND status = 'confirmed'",
+            "SELECT COUNT(*) as count FROM slot_signups
+             WHERE slot_id = $1 AND status = 'confirmed'",
             slot_id
         )
         .fetch_one(&mut *tx)
@@ -514,7 +590,7 @@ pub async fn guest_signup(
         .await?;
 
         if already.is_some() {
-            continue; // si ya está anotado en este slot, lo saltamos silenciosamente
+            continue;
         }
 
         let signup = sqlx::query!(
@@ -525,8 +601,12 @@ pub async fn guest_signup(
                 RETURNING id
             ),
             inserted_shift AS (
-                INSERT INTO shifts (event_id, user_id, shift_type, slot_id, scheduled_start, scheduled_end, status)
-                SELECT $3, $2, 'scheduled', $1, s.start_time, s.end_time, 'approved'
+                INSERT INTO shifts (
+                    event_id, user_id, shift_type, slot_id,
+                    scheduled_start, scheduled_end, status
+                )
+                SELECT $3, $2, 'scheduled', $1,
+                       s.start_time, s.end_time, 'approved'
                 FROM schedule_slots s WHERE s.id = $1
             )
             SELECT id FROM inserted_signup
@@ -543,12 +623,20 @@ pub async fn guest_signup(
 
     tx.commit().await?;
 
-    Ok((StatusCode::CREATED, Json(GuestSignupResponse {
-        message: format!(
-            "Te anotaste en {} turno(s) exitosamente",
+    let message = if is_new_account {
+        format!(
+            "Cuenta creada y te anotaste en {} turno(s). ¡Ya podés entrar a la app!",
             signup_ids.len()
-        ),
+        )
+    } else {
+        format!("Te anotaste en {} turno(s) exitosamente", signup_ids.len())
+    };
+
+    Ok((StatusCode::CREATED, Json(GuestSignupResponse {
+        message,
         user_id,
         signups: signup_ids,
+        token: jwt_token,
+        is_new_account,
     })))
 }

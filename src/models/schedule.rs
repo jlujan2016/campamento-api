@@ -88,6 +88,9 @@ pub struct GuestSignupRequest {
     pub name: String,
     pub phone: String,
     pub slot_ids: Vec<Uuid>,    // puede elegir varios slots
+    // Nuevos campos opcionales — si vienen, crea cuenta completa
+    pub email: Option<String>,
+    pub password: Option<String>,
 }
 
 // Resultado de anotarse via enlace temporal
@@ -96,4 +99,6 @@ pub struct GuestSignupResponse {
     pub message: String,
     pub user_id: Uuid,          // el ID del usuario invitado creado
     pub signups: Vec<Uuid>,     // IDs de los slot_signups creados
+    pub token: Option<String>,    // Some(token) si se registró con email/password
+    pub is_new_account: bool,     // true = cuenta nueva creada
 }
