@@ -32,31 +32,33 @@ async fn main() {
         .expect("Error al aplicar migraciones");
     info!("✅ Migraciones aplicadas");
 
-    // Iniciamos el worker de Telegram si hay token configurado
+    // Worker de Telegram
     if let Some(token) = &config.telegram_bot_token {
         let bot = telegram::TelegramBot::new(token.clone());
         let worker_pool = pool.clone();
         let worker_bot = bot.clone();
-
-        // tokio::spawn lanza una tarea asíncrona en segundo plano
-        // El servidor y el worker corren en paralelo sin bloquearse
         tokio::spawn(async move {
             worker::run_notification_worker(worker_pool, worker_bot).await;
         });
-
         info!("🤖 Worker de Telegram iniciado");
     } else {
         info!("⚠️  TELEGRAM_BOT_TOKEN no configurado — notificaciones desactivadas");
     }
 
-    let app = routes::create_router(pool, config.jwt_secret);
+    // Pasamos cors_origins a create_router
+    let app = routes::create_router(
+        pool,
+        config.jwt_secret.clone(),
+        config.cors_origins.clone(),
+    );
 
-    let addr = format!("0.0.0.0:{}", config.port);
+    let addr = format!("{}:{}", config.host, config.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("No se pudo iniciar el servidor");
 
     info!("🚀 Servidor corriendo en http://{}", addr);
+    info!("🌐 Orígenes CORS permitidos: {:?}", config.cors_origins);
 
     axum::serve(listener, app)
         .await

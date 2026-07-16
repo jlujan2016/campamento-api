@@ -1,29 +1,55 @@
-// Una "struct" en Rust es como un objeto con campos tipados
-// #[derive(Clone)] permite copiar/clonar esta estructura cuando sea necesario
-// (Axum necesita poder clonarla para pasarla a cada handler)
 #[derive(Clone)]
 pub struct Config {
     pub database_url: String,
     pub jwt_secret: String,
     pub port: u16,
+    pub host: String,
+    pub cors_origins: Vec<String>,          // lista separada por comas en .env
     pub telegram_bot_token: Option<String>,
 }
 
 impl Config {
-    // "impl" define los métodos de una estructura
-    // Este método "new" lee las variables de entorno y construye el Config
-    // Si falta alguna variable obligatoria, el programa termina con un error claro
     pub fn from_env() -> Self {
+        // DATABASE_URL — obligatoria
+        let database_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL debe estar definida en .env");
+
+        // JWT_SECRET — obligatoria y debe ser estable
+        // Si cambia, todos los tokens existentes quedan inválidos (logout masivo)
+        let jwt_secret = std::env::var("JWT_SECRET")
+            .expect("JWT_SECRET debe estar definida en .env");
+
+        // APP_PORT — default 8090 para no chocar con otros servicios
+        let port = std::env::var("APP_PORT")
+            .unwrap_or_else(|_| "8090".to_string())
+            .parse::<u16>()
+            .expect("APP_PORT debe ser un número entre 1 y 65535");
+
+        // APP_HOST — default 0.0.0.0 (escucha en todas las interfaces)
+        // En producción con Cloudflare tunnel: 127.0.0.1 es más seguro
+        let host = std::env::var("APP_HOST")
+            .unwrap_or_else(|_| "0.0.0.0".to_string());
+
+        // CORS_ORIGINS — lista separada por comas
+        // En producción modo mismo-origen NO se necesita CORS
+        // En desarrollo: http://localhost:5174,http://192.168.1.X:5174
+        let cors_origins = std::env::var("CORS_ORIGINS")
+            .unwrap_or_else(|_| "http://localhost:5174".to_string())
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        // TELEGRAM_BOT_TOKEN — opcional
+        let telegram_bot_token = std::env::var("TELEGRAM_BOT_TOKEN").ok();
+
         Self {
-            database_url: std::env::var("DATABASE_URL")
-                .expect("DATABASE_URL no está definida en .env"),
-            jwt_secret: std::env::var("JWT_SECRET")
-                .expect("JWT_SECRET no está definida en .env"),
-            port: std::env::var("PORT")
-                .unwrap_or_else(|_| "3000".to_string())
-                .parse()
-                .expect("PORT debe ser un número válido"),
-            telegram_bot_token: std::env::var("TELEGRAM_BOT_TOKEN").ok(),
+            database_url,
+            jwt_secret,
+            port,
+            host,
+            cors_origins,
+            telegram_bot_token,
         }
     }
 }

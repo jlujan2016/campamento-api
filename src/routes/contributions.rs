@@ -303,7 +303,7 @@ pub async fn attend_final_checkpoint(
 
     if let Some(min_hours) = event.min_total_hours {
         // Calculamos las horas reales acumuladas (métrica 2)
-        let real_hours: f64 = sqlx::query_scalar!(
+        let _real_hours: f64 = sqlx::query_scalar!(
             r#"
             SELECT COALESCE(
                 SUM(

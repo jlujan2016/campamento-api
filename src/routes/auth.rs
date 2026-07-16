@@ -59,7 +59,7 @@ pub async fn register(
         r#"
         INSERT INTO users (email, password_hash, name, phone, is_guest)
         VALUES ($1, $2, $3, $4, false)
-        RETURNING id, email, name, phone, is_super_admin, is_guest, created_at
+        RETURNING id, email, name, phone, is_super_admin, is_guest, is_blocked, created_at
         "#,
         req.email,
         password_hash,
@@ -83,40 +83,46 @@ pub async fn login(
 
     // Buscamos el usuario por email
     // fetch_optional devuelve None si no existe (sin tirar error)
+    // Buscamos el usuario por email
     let user_record = sqlx::query!(
         r#"
         SELECT id, email, name, phone, password_hash,
-               is_super_admin, is_guest, created_at
+            is_super_admin, is_guest, is_blocked, created_at
         FROM users
         WHERE email = $1 AND is_guest = false
         "#,
         req.email
     )
     .fetch_optional(&state.pool)
-    .await?;
+    .await?
+    .ok_or_else(|| AppError::Unauthorized("Credenciales incorrectas".to_string()))?;
 
-    // Usamos el mismo mensaje de error tanto si el email no existe
-    // como si la contraseña es incorrecta — evita dar pistas a atacantes
-    let record = user_record
+    // Verificar si está bloqueado
+    if user_record.is_blocked {
+        return Err(AppError::Unauthorized(
+            "Tu cuenta ha sido bloqueada. Contactá al administrador.".to_string()
+        ));
+    }
+
+    let password_hash = user_record.password_hash
         .ok_or_else(|| AppError::Unauthorized("Credenciales incorrectas".to_string()))?;
 
-    let password_hash = record.password_hash
-        .ok_or_else(|| AppError::Unauthorized("Credenciales incorrectas".to_string()))?;
-
-    // Verificamos la contraseña contra el hash guardado
     if !verify_password(&req.password, &password_hash)? {
         return Err(AppError::Unauthorized("Credenciales incorrectas".to_string()));
     }
 
     let user = UserPublic {
-        id: record.id,
-        email: record.email,
-        name: record.name,
-        phone: record.phone,
-        is_super_admin: record.is_super_admin,
-        is_guest: record.is_guest,
-        created_at: record.created_at,
+        id: user_record.id,
+        email: user_record.email,
+        name: user_record.name,
+        phone: user_record.phone,
+        is_super_admin: user_record.is_super_admin,
+        is_guest: user_record.is_guest,
+        is_blocked: user_record.is_blocked,
+        created_at: user_record.created_at,
     };
+
+
 
     let token = generate_token(user.id, user.is_super_admin, &state.jwt_secret)?;
 
@@ -147,7 +153,7 @@ pub async fn me(
     let user = sqlx::query_as!(
         UserPublic,
         r#"
-        SELECT id, email, name, phone, is_super_admin, is_guest, created_at
+        SELECT id, email, name, phone, is_super_admin, is_guest, is_blocked, created_at
         FROM users WHERE id = $1
         "#,
         user_id

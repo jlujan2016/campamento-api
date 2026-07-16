@@ -3,8 +3,8 @@ use axum::{
     routing::{get, post, put},
     Router,
 };
-use axum::http::{header, Method, HeaderValue}; // 1. Módulos HTTP para configurar las cabeceras
-use tower_http::cors::CorsLayer;                // 2. Middleware de CORS de tower-http
+use axum::http::{header, Method, HeaderValue};
+use tower_http::cors::CorsLayer;
 use sqlx::PgPool;
 
 mod health;
@@ -16,10 +16,16 @@ pub mod replacements;
 pub mod contributions;
 pub mod metrics;
 pub mod telegram;
+pub mod users;
 
 pub use auth::AuthState;
 
-pub fn create_router(pool: PgPool, jwt_secret: String) -> Router {
+// Ahora recibe cors_origins además del pool y jwt_secret
+pub fn create_router(
+    pool: PgPool,
+    jwt_secret: String,
+    cors_origins: Vec<String>,
+) -> Router {
     let auth_state = AuthState {
         pool: pool.clone(),
         jwt_secret,
@@ -52,6 +58,7 @@ pub fn create_router(pool: PgPool, jwt_secret: String) -> Router {
         .route("/events/:id/shifts/gaps", get(replacements::list_gaps))
         .route("/shifts/:id/checkin", post(shifts::do_checkin))
         .route("/shifts/:id/checkout", post(shifts::do_checkout))
+        .route("/shifts/:id/approve", put(shifts::approve_shift))
         .route("/shifts/:id/replacement", post(replacements::create_replacement))
         .route("/shifts/:id/replacement/:rid",
             put(replacements::respond_replacement))
@@ -63,7 +70,7 @@ pub fn create_router(pool: PgPool, jwt_secret: String) -> Router {
             .post(contributions::create_contribution_type))
         .route("/events/:id/contributions",
             get(contributions::list_contributions)
-            .post(contributions::create_contribution))            
+            .post(contributions::create_contribution))
         .route("/contributions/:id/approve",
             put(contributions::approve_contribution))
         .route("/events/:id/final-checkpoint",
@@ -72,28 +79,48 @@ pub fn create_router(pool: PgPool, jwt_secret: String) -> Router {
             post(contributions::attend_final_checkpoint))
         .route("/events/:id/metrics", get(metrics::get_metrics))
         .route("/events/:id/ranking", get(metrics::get_ranking))
-        // Telegram
         .route("/events/:id/telegram/group", post(telegram::link_group))
         .route("/telegram/link-account", post(telegram::link_account))
-        .route("/shifts/:id/approve", put(shifts::approve_shift))
+        .route("/users", get(users::list_users).post(users::create_user))
+        .route("/users/:id/block", put(users::block_user))
+        .route("/users/:id",
+            axum::routing::delete(users::delete_user))
+        .route("/events/:id/assign-admin", post(users::assign_event_admin))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth::require_auth,
         ))
         .with_state(auth_state);
 
-    // 3. Configuración estricta de la capa CORS para interactuar con React
-    let cors = CorsLayer::new()
-        .allow_origin([
-            "http://localhost:5173".parse::<HeaderValue>().unwrap(),
-            "http://192.168.100.95:5173".parse::<HeaderValue>().unwrap(),
-        ])
-        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS])
-        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
+    // CORS dinámico — lee los orígenes de la config
+    // Si cors_origins está vacío, no se aplica CORS (modo mismo-origen)
+    let cors = if cors_origins.is_empty() {
+        None
+    } else {
+        let origins: Vec<HeaderValue> = cors_origins
+            .iter()
+            .filter_map(|o| o.parse::<HeaderValue>().ok())
+            .collect();
 
-    // 4. Se fusionan las rutas y se aplica el middleware globalmente al final
-    Router::new()
+        Some(
+            CorsLayer::new()
+                .allow_origin(origins)
+                .allow_methods([
+                    Method::GET, Method::POST, Method::PUT,
+                    Method::DELETE, Method::OPTIONS,
+                ])
+                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+        )
+    };
+
+    let router = Router::new()
         .merge(public_routes)
-        .merge(protected_routes)
-        .layer(cors) 
+        .merge(protected_routes);
+
+    // Solo aplicamos la capa CORS si hay orígenes configurados
+    if let Some(cors_layer) = cors {
+        router.layer(cors_layer)
+    } else {
+        router
+    }
 }
