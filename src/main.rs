@@ -50,6 +50,7 @@ async fn main() {
         pool,
         config.jwt_secret.clone(),
         config.cors_origins.clone(),
+        config.frontend_dist.clone(),
     );
 
     let addr = format!("{}:{}", config.host, config.port);
@@ -58,7 +59,15 @@ async fn main() {
         .expect("No se pudo iniciar el servidor");
 
     info!("🚀 Servidor corriendo en http://{}", addr);
-    info!("🌐 Orígenes CORS permitidos: {:?}", config.cors_origins);
+
+
+    if config.frontend_dist.is_some() {
+        info!("🌐 Modo producción — sirviendo frontend + API desde mismo origen");
+        info!("⚠️  CORS desactivado (mismo origen)");
+    } else {
+        info!("🔧 Modo desarrollo — solo API");
+        info!("🌐 Orígenes CORS: {:?}", config.cors_origins);
+    }
 
     axum::serve(listener, app)
         .await

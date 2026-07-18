@@ -6,6 +6,7 @@ pub struct Config {
     pub host: String,
     pub cors_origins: Vec<String>,          // lista separada por comas en .env
     pub telegram_bot_token: Option<String>,
+    pub frontend_dist: Option<String>,  // ← nuevo: ruta a dist/ del frontend
 }
 
 impl Config {
@@ -34,7 +35,7 @@ impl Config {
         // En producción modo mismo-origen NO se necesita CORS
         // En desarrollo: http://localhost:5174,http://192.168.1.X:5174
         let cors_origins = std::env::var("CORS_ORIGINS")
-            .unwrap_or_else(|_| "http://localhost:5174".to_string())
+            .unwrap_or_default()
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
@@ -43,6 +44,11 @@ impl Config {
         // TELEGRAM_BOT_TOKEN — opcional
         let telegram_bot_token = std::env::var("TELEGRAM_BOT_TOKEN").ok();
 
+        // Ruta a la carpeta dist/ del frontend
+        // En producción: ../campamento-web/dist o ruta absoluta
+        // Si no está definida, no sirve archivos estáticos (solo API)
+        let frontend_dist = std::env::var("FRONTEND_DIST").ok();
+
         Self {
             database_url,
             jwt_secret,
@@ -50,6 +56,7 @@ impl Config {
             host,
             cors_origins,
             telegram_bot_token,
+            frontend_dist,
         }
     }
 }

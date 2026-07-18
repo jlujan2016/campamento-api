@@ -5,6 +5,7 @@ use axum::{
 };
 use axum::http::{header, Method, HeaderValue};
 use tower_http::cors::CorsLayer;
+use tower_http::services::{ServeDir, ServeFile};
 use sqlx::PgPool;
 
 mod health;
@@ -25,6 +26,7 @@ pub fn create_router(
     pool: PgPool,
     jwt_secret: String,
     cors_origins: Vec<String>,
+    frontend_dist: Option<String>, 
 ) -> Router {
     let auth_state = AuthState {
         pool: pool.clone(),
@@ -113,14 +115,36 @@ pub fn create_router(
         )
     };
 
-    let router = Router::new()
+
+    // Router de la API — todas las rutas bajo /api/*
+    // En producción el frontend hace fetch("/api/...") y llega acá
+    let api_router = Router::new()
         .merge(public_routes)
         .merge(protected_routes);
 
+    // Router principal
+    let mut app = Router::new()
+        .nest("/api", api_router);  // ← todas las rutas de API quedan bajo /api
+
+    // Si hay un dist/ configurado, lo servimos como archivos estáticos
+    if let Some(dist_path) = frontend_dist {
+        tracing::info!("📁 Sirviendo frontend desde: {}", dist_path);
+
+        // ServeDir sirve archivos estáticos desde la carpeta dist/
+        // ServeFile sirve index.html como fallback para React Router
+        let serve_dir = ServeDir::new(&dist_path)
+            .not_found_service(ServeFile::new(format!("{}/index.html", dist_path)));
+
+        app = app
+            // Archivos estáticos en la raíz
+            .fallback_service(serve_dir);
+    }
+
+
     // Solo aplicamos la capa CORS si hay orígenes configurados
     if let Some(cors_layer) = cors {
-        router.layer(cors_layer)
+        app.layer(cors_layer)
     } else {
-        router
+        app
     }
 }
