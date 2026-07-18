@@ -10,3 +10,6 @@ Thumbs.db
 
 # VS Code (opcional, algunos prefieren subirlo para compartir configuración)
 .vscode/
+
+# Backups de base de datos
+*.sql
