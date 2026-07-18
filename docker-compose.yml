@@ -2,18 +2,40 @@ version: "3.9"
 
 services:
   db:
+    # Imagen oficial de PostgreSQL 16 con PostGIS incluido
+    # Funciona igual en Windows, Linux y Mac
     image: postgis/postgis:16-3.4
+
+    # Reinicia automáticamente si el servidor se reinicia
+    # Útil para producción — la DB arranca sola con el sistema
     restart: unless-stopped
+
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
+
     ports:
-      # DB_PORT_HOST = puerto en tu máquina (default 5433 para no chocar con otro Postgres)
-      # El contenedor siempre usa 5432 internamente
+      # DB_PORT_HOST = puerto en tu máquina (default 5433)
+      # Cambiá a 5432 si no hay otro PostgreSQL instalado
+      # El contenedor siempre usa 5432 internamente — eso nunca cambia
       - "${DB_PORT_HOST:-5433}:5432"
+
     volumes:
+      # Los datos se guardan en un volumen nombrado
+      # Persisten aunque el contenedor se reinicie o actualice
+      # Para ver dónde están: docker volume inspect campamento-api_postgres_data
       - postgres_data:/var/lib/postgresql/data
+
+    # Healthcheck: Docker verifica que PostgreSQL está listo
+    # Otros servicios pueden esperar a que esté "healthy" antes de arrancar
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:
+    # El volumen se llama campamento-api_postgres_data en Docker
+    # Para hacer backup: docker exec campamento-api-db-1 pg_dump ...
