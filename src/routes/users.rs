@@ -372,3 +372,77 @@ pub async fn assign_event_admin(
         "user_name": user.name
     })))
 }
+
+// POST /events/:id/remove-admin — degradar admin a participante (solo super admin)
+pub async fn remove_event_admin(
+    State(state): State<AuthState>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, AppError> {
+
+    if !claims.is_super_admin {
+        return Err(AppError::Unauthorized(
+            "Solo el super admin puede quitar admins de evento".to_string()
+        ));
+    }
+
+    let target_user_id = body["user_id"]
+        .as_str()
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .ok_or_else(|| AppError::Validation(
+            "user_id inválido o faltante".to_string()
+        ))?;
+
+    // El super admin no puede degradarse a sí mismo por accidente
+    let self_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| AppError::Unauthorized("Token inválido".to_string()))?;
+
+    if self_id == target_user_id {
+        return Err(AppError::Validation(
+            "No podés quitarte el rol a vos mismo".to_string()
+        ));
+    }
+
+    // Verificar que el usuario es admin de este evento
+    let member = sqlx::query!(
+        r#"
+        SELECT id, role FROM event_members
+        WHERE event_id = $1 AND user_id = $2 AND status = 'active'
+        "#,
+        event_id, target_user_id
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(
+        "El usuario no es miembro de este evento".to_string()
+    ))?;
+
+    if member.role != "admin" {
+        return Err(AppError::Validation(
+            "El usuario no es admin de este evento".to_string()
+        ));
+    }
+
+    // Degradar a participante
+    sqlx::query!(
+        "UPDATE event_members SET role = 'participant' WHERE id = $1",
+        member.id
+    )
+    .execute(&state.pool)
+    .await?;
+
+    let user = sqlx::query!(
+        "SELECT name FROM users WHERE id = $1",
+        target_user_id
+    )
+    .fetch_one(&state.pool)
+    .await?;
+
+    Ok(Json(serde_json::json!({
+        "message": "Rol de admin removido",
+        "event_id": event_id,
+        "user_id": target_user_id,
+        "user_name": user.name
+    })))
+}
