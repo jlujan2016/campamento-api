@@ -95,14 +95,41 @@ pub async fn create_event(
 // GET /events — listar todos los eventos activos
 pub async fn list_events(
     State(state): State<AuthState>,
+    Extension(claims): Extension<Claims>,
 ) -> Result<Json<Vec<Event>>, AppError> {
 
-    let events = sqlx::query_as!(
-        Event,
-        "SELECT * FROM events WHERE status = 'active' ORDER BY start_date ASC"
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let user_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| AppError::Unauthorized("Token inválido".to_string()))?;
+
+    let events = if claims.is_super_admin {
+        // Super admin ve todos los eventos activos
+        sqlx::query_as!(
+            Event,
+            r#"
+            SELECT * FROM events
+            WHERE status = 'active'
+            ORDER BY start_date ASC
+            "#
+        )
+        .fetch_all(&state.pool)
+        .await?
+    } else {
+        // Participantes y admins de evento: solo donde son miembros activos
+        sqlx::query_as!(
+            Event,
+            r#"
+            SELECT e.* FROM events e
+            JOIN event_members em ON em.event_id = e.id
+            WHERE e.status = 'active'
+            AND em.user_id = $1
+            AND em.status = 'active'
+            ORDER BY e.start_date ASC
+            "#,
+            user_id
+        )
+        .fetch_all(&state.pool)
+        .await?
+    };
 
     Ok(Json(events))
 }
