@@ -274,7 +274,23 @@ pub async fn list_slot_signups(
     let user_id = Uuid::parse_str(&claims.sub)
         .map_err(|_| AppError::Unauthorized("Token inválido".to_string()))?;
 
-    verify_event_admin(&state.pool, event_id, user_id, claims.is_super_admin).await?;
+    // Cualquier miembro activo del evento puede ver los inscriptos
+    // (transparencia: todos saben quién está en cada turno)
+    let is_member = sqlx::query!(
+        r#"
+        SELECT id FROM event_members
+        WHERE event_id = $1 AND user_id = $2 AND status = 'active'
+        "#,
+        event_id, user_id
+    )
+    .fetch_optional(&state.pool)
+    .await?;
+
+    if is_member.is_none() && !claims.is_super_admin {
+        return Err(AppError::Unauthorized(
+            "Solo los miembros del evento pueden ver los inscriptos".to_string()
+        ));
+    }
 
     let signups = sqlx::query_as!(
         SlotSignup,
