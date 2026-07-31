@@ -16,6 +16,13 @@ use crate::{
     routes::AuthState,
 };
 
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+pub struct AddMemberRequest {
+    pub user_id: Uuid,
+}
+
 // POST /events — crear evento (solo super admin)
 pub async fn create_event(
     State(state): State<AuthState>,
@@ -350,4 +357,65 @@ pub async fn verify_event_admin(
     }
 
     Ok(())
+}
+
+
+// POST /events/:id/members/add — admin agrega un usuario existente al evento
+pub async fn add_member(
+    State(state): State<AuthState>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+    Json(req): Json<AddMemberRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
+
+    let admin_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| AppError::Unauthorized("Token inválido".to_string()))?;
+
+    verify_event_admin(&state.pool, event_id, admin_id, claims.is_super_admin).await?;
+
+    // Verificar que el usuario existe
+    let target = sqlx::query!(
+        "SELECT name FROM users WHERE id = $1",
+        req.user_id
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Usuario no encontrado".to_string()))?;
+
+    // Verificar si ya es miembro (activo o retirado)
+    let existing = sqlx::query!(
+        "SELECT id, status FROM event_members WHERE event_id = $1 AND user_id = $2",
+        event_id, req.user_id
+    )
+    .fetch_optional(&state.pool)
+    .await?;
+
+    if let Some(member) = existing {
+        if member.status == "active" {
+            return Err(AppError::Validation(
+                format!("{} ya es miembro activo de este evento", target.name)
+            ));
+        }
+        // Si estaba retirado, lo reactivamos
+        sqlx::query!(
+            "UPDATE event_members SET status = 'active', withdrawn_at = NULL WHERE id = $1",
+            member.id
+        )
+        .execute(&state.pool)
+        .await?;
+    } else {
+        // Nuevo miembro
+        sqlx::query!(
+            "INSERT INTO event_members (event_id, user_id, role) VALUES ($1, $2, 'participant')",
+            event_id, req.user_id
+        )
+        .execute(&state.pool)
+        .await?;
+    }
+
+    Ok((StatusCode::CREATED, Json(serde_json::json!({
+        "message": format!("{} agregado al evento", target.name),
+        "user_id": req.user_id,
+        "user_name": target.name
+    }))))
 }

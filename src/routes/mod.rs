@@ -89,6 +89,7 @@ pub fn create_router(
             axum::routing::delete(users::delete_user))
         .route("/events/:id/assign-admin", post(users::assign_event_admin))
         .route("/events/:id/remove-admin", post(users::remove_event_admin))
+        .route("/events/:id/members/add", post(events::add_member))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth::require_auth,
