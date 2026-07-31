@@ -117,3 +117,33 @@ pub async fn link_account(
         "user_id": user_id
     }))))
 }
+
+// GET /events/:id/telegram/group — ver si el evento tiene grupo vinculado
+pub async fn get_group_link(
+    State(state): State<AuthState>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+
+    let user_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| AppError::Unauthorized("Token inválido".to_string()))?;
+
+    crate::routes::events::verify_event_admin(
+        &state.pool, event_id, user_id, claims.is_super_admin
+    ).await?;
+
+    let link = sqlx::query!(
+        r#"
+        SELECT telegram_chat_id FROM telegram_links
+        WHERE event_id = $1 AND link_type = 'group'
+        "#,
+        event_id
+    )
+    .fetch_optional(&state.pool)
+    .await?;
+
+    Ok(Json(serde_json::json!({
+        "linked": link.is_some(),
+        "telegram_chat_id": link.map(|l| l.telegram_chat_id)
+    })))
+}

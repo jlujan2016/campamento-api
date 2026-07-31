@@ -81,7 +81,8 @@ pub fn create_router(
             post(contributions::attend_final_checkpoint))
         .route("/events/:id/metrics", get(metrics::get_metrics))
         .route("/events/:id/ranking", get(metrics::get_ranking))
-        .route("/events/:id/telegram/group", post(telegram::link_group))
+        .route("/events/:id/telegram/group",
+            get(telegram::get_group_link).post(telegram::link_group))
         .route("/telegram/link-account", post(telegram::link_account))
         .route("/users", get(users::list_users).post(users::create_user))
         .route("/users/:id/block", put(users::block_user))
