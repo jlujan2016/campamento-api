@@ -127,3 +127,102 @@ pub fn build_message(notification_type: &str, payload: &serde_json::Value) -> St
         _ => format!("📢 Notificación del sistema de campamento"),
     }
 }
+
+use serde::Deserialize;
+
+// ── Estructuras para leer los mensajes entrantes (getUpdates) ──
+
+#[derive(Debug, Deserialize)]
+struct TelegramUpdate {
+    update_id: i64,
+    message: Option<TelegramMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramMessage {
+    chat: TelegramChat,
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramChat {
+    id: i64,
+    #[serde(rename = "type")]
+    chat_type: String,
+    title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GetUpdatesResponse {
+    result: Vec<TelegramUpdate>,
+}
+
+impl TelegramBot {
+    // Revisa mensajes nuevos y responde automáticamente al comando /chatid
+    // offset: desde qué update_id seguir (evita repetir mensajes ya procesados)
+    // Devuelve el próximo offset a usar en la siguiente llamada
+    pub async fn check_chatid_commands(&self, offset: i64) -> i64 {
+        let url = format!(
+            "https://api.telegram.org/bot{}/getUpdates?offset={}&timeout=0",
+            self.token, offset
+        );
+
+        let resp = match self.client.get(&url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("Error consultando getUpdates: {}", e);
+                return offset;
+            }
+        };
+
+        let data: GetUpdatesResponse = match resp.json().await {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!("Error parseando getUpdates: {}", e);
+                return offset;
+            }
+        };
+
+        let mut next_offset = offset;
+
+        for update in data.result {
+            // El próximo offset siempre es el último update_id visto + 1
+            next_offset = update.update_id + 1;
+
+            if let Some(msg) = update.message {
+                let is_chatid_command = msg.text
+                    .as_deref()
+                    .map(|t| t.trim() == "/chatid")
+                    .unwrap_or(false);
+
+                if is_chatid_command {
+                    let reply = if msg.chat.chat_type == "private" {
+                        format!(
+                            "🆔 Tu Chat ID privado es:\n\n<code>{}</code>\n\n\
+                            Esto es solo informativo — no necesitás pegarlo en ningún lado. \
+                            Tu cuenta ya está vinculada automáticamente cuando usaste /start.",
+                            msg.chat.id
+                        )
+                    } else {
+                        let group_name = msg.chat.title
+                            .clone()
+                            .unwrap_or_else(|| "sin nombre".to_string());
+                        format!(
+                            "🆔 El Chat ID de este grupo (\"{}\") es:\n\n<code>{}</code>\n\n\
+                            Copiá ese número y pegalo en la app, en \
+                            Configuración del evento → Notificaciones Telegram → Vincular.",
+                            group_name, msg.chat.id
+                        )
+                    };
+
+                    let chat_id_str = msg.chat.id.to_string();
+                    if let Err(e) = self.send_message(&chat_id_str, &reply).await {
+                        tracing::warn!("Error respondiendo /chatid: {:?}", e);
+                    }
+                }
+            }
+        }
+
+        next_offset
+    }
+}

@@ -7,6 +7,8 @@ use crate::telegram::{build_message, TelegramBot};
 pub async fn run_notification_worker(pool: PgPool, bot: TelegramBot) {
     tracing::info!("🤖 Worker de notificaciones iniciado");
 
+    let mut chatid_offset: i64 = 0;
+
     loop {
         // Esperamos 30 segundos entre cada ciclo
         tokio::time::sleep(Duration::from_secs(30)).await;
@@ -25,6 +27,8 @@ pub async fn run_notification_worker(pool: PgPool, bot: TelegramBot) {
         if let Err(e) = schedule_shift_reminders(&pool).await {
             tracing::error!("Error programando recordatorios: {:?}", e);
         }
+        // revisa si alguien escribió /chatid
+        chatid_offset = bot.check_chatid_commands(chatid_offset).await;
     }
 }
 
