@@ -1,6 +1,8 @@
-# 🏕️ Campamento App
+# 🏕️ Campamento App — Backend
 
 Sistema web para control de turnos en campamentos previos a conciertos. Reemplaza el cronograma en Excel con una PWA instalable en iOS y Android que permite gestionar turnos rotativos, check-in/out con GPS, aportes, métricas de transparencia y notificaciones automáticas por Telegram.
+
+**En producción en [https://appconcert.online](https://appconcert.online)** vía Cloudflare Tunnel — ver [`DESPLIEGUE.md`](./DESPLIEGUE.md) para la guía completa de despliegue (PC nueva, junto a otra app, o publicar en Cloudflare).
 
 ---
 
@@ -17,7 +19,7 @@ Sistema web para control de turnos en campamentos previos a conciertos. Reemplaz
 - [API — Endpoints](#api--endpoints)
 - [Roles y permisos](#roles-y-permisos)
 - [Las 4 métricas de transparencia](#las-4-métricas-de-transparencia)
-- [Notificaciones Telegram](#notificaciones-telegram)
+- [Notificaciones Telegram — guía completa](#-notificaciones-telegram--guía-completa)
 - [PWA — Instalación en celular](#pwa--instalación-en-celular)
 - [Estructura del proyecto](#estructura-del-proyecto)
 - [Próximos pasos](#próximos-pasos)
@@ -26,21 +28,20 @@ Sistema web para control de turnos en campamentos previos a conciertos. Reemplaz
 
 ## ✨ Características
 
-- **Multi-evento**: una persona puede participar en varios campamentos en paralelo (ej. The Strokes y Hayley Williams simultáneamente)
-- **Cronograma colaborativo**: el admin define franjas horarias con cupos; los participantes eligen sus turnos
-- **Enlace temporal público**: se comparte por Telegram/WhatsApp para que alguien se anote sin necesidad de crear cuenta
-- **Check-in/out con GPS**: registro de entrada y salida con coordenadas de referencia (no bloqueante) y foto opcional
+- **Multi-evento**: una persona puede participar en varios campamentos en paralelo
+- **Cronograma colaborativo**: el admin define franjas horarias con cupos; los participantes eligen sus turnos y ven quién más está anotado
+- **Enlace temporal público**: se comparte por Telegram/WhatsApp para que alguien se anote creando cuenta completa (con auto-login) o solo como invitado
+- **Check-in/out con GPS**: registro de entrada y salida con coordenadas del dispositivo del usuario (no bloqueante)
 - **Reemplazos de turno**: parciales o totales, con confirmación cruzada entre las dos partes
 - **Turnos extra espontáneos**: alguien puede ir aunque no esté en el cronograma; el admin lo aprueba
-- **Retiro de participantes**: libera automáticamente los turnos futuros y notifica al grupo
-- **Vacíos sin resolver**: si alguien avisó que llega tarde y nadie cubre, el turno se marca visible para el admin
+- **Retiro de participantes**: libera automáticamente los turnos futuros y notifica al grupo de Telegram
+- **Agregar miembro directo**: el admin puede sumar a un usuario existente al evento sin pasar por el enlace
 - **Corrimiento de horario por tardanza**: si alguien llega tarde (pasada la tolerancia configurable), su turno se extiende para completar las horas comprometidas
 - **Aportes**: carpa, colchón, comida, transporte, dinero — cada uno con bono de horas configurable
 - **4 métricas de transparencia**: horas debidas, horas reales, con tramo final, con aportes
-- **Ranking oficial de la fila**: ordenado por métrica 4 (total con aportes)
-- **Tramo final**: registro opcional de presencia el día del concierto; bloquea el ranking si no se cumplen las horas mínimas
-- **Turno nocturno**: requisito informativo (no bloqueante) configurable por evento
-- **Notificaciones Telegram**: grupales (huecos, enlace nuevo) y privadas (recordatorio 1h antes, reemplazo confirmado, aporte aprobado)
+- **Ranking oficial de la fila**: visible para todos los miembros, ordenado por métrica 4 (total con aportes)
+- **Gestión de usuarios**: el super admin crea, busca, bloquea y elimina usuarios; promueve o degrada admins de evento
+- **Notificaciones Telegram**: grupales (huecos liberados, enlace nuevo) y privadas (recordatorio 1h antes, reemplazo confirmado, aporte aprobado) — con un comando en el bot para obtener el Chat ID sin tocar JSON
 - **PWA**: instalable en iOS y Android sin pasar por las stores
 
 ---
@@ -58,7 +59,7 @@ Sistema web para control de turnos en campamentos previos a conciertos. Reemplaz
 | **PostGIS** | Extensión para datos de geolocalización |
 | **Argon2** | Hash seguro de contraseñas |
 | **JWT (jsonwebtoken)** | Autenticación stateless |
-| **tower-http** | Middleware CORS |
+| **tower-http** | CORS + servir el frontend compilado en producción |
 | **reqwest** | Cliente HTTP para la API de Telegram |
 | **Docker** | Contenedor de la base de datos |
 
@@ -77,35 +78,42 @@ Sistema web para control de turnos en campamentos previos a conciertos. Reemplaz
 
 ## 🏗️ Arquitectura
 
+**Desarrollo** — frontend y backend como procesos separados, unidos por el proxy de Vite:
+
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Cliente (PWA)                      │
-│              React + TypeScript + Vite               │
-│         Móvil (iOS/Android) y Web (escritorio)       │
-└───────────────────┬─────────────────────────────────┘
-                    │ HTTP/JSON (REST API)
-                    │ CORS configurado
-┌───────────────────▼─────────────────────────────────┐
-│                Backend (Rust / Axum)                  │
-│                                                       │
-│  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐ │
-│  │   Rutas     │  │  Middleware  │  │   Worker    │ │
-│  │  (handlers) │  │  (JWT auth)  │  │  Telegram   │ │
-│  └──────┬──────┘  └──────────────┘  └──────┬──────┘ │
-│         │                                   │        │
-│  ┌──────▼───────────────────────────────────▼──────┐ │
-│  │                    SQLx                          │ │
-│  └──────────────────────┬───────────────────────────┘ │
-└─────────────────────────┼───────────────────────────┘
-                          │
-┌─────────────────────────▼───────────────────────────┐
-│           PostgreSQL 16 + PostGIS (Docker)            │
-│                                                       │
-│  users · events · event_members · schedule_slots      │
-│  slot_signups · shifts · checkins · contributions     │
-│  notifications · telegram_links · final_checkpoints   │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────┐        ┌──────────────────────────┐
+│   Vite dev server :5174  │ ──/api→│   Axum backend :8090      │
+│   (React + TS)           │  proxy │   API + worker Telegram   │
+└─────────────────────────┘        └────────────┬─────────────┘
+                                                  │
+                                    ┌─────────────▼─────────────┐
+                                    │ PostgreSQL 16 + PostGIS    │
+                                    │ (Docker)                   │
+                                    └────────────────────────────┘
 ```
+
+**Producción** — un solo proceso, Axum sirve todo por HTTPS vía Cloudflare Tunnel:
+
+```
+┌────────────────────────────────────────────────────┐
+│         https://appconcert.online (Cloudflare)       │
+└───────────────────────┬──────────────────────────────┘
+                         │ túnel HTTPS
+┌───────────────────────▼──────────────────────────────┐
+│              Axum backend :8090                       │
+│   /api/*  → API          /*  → frontend compilado      │
+│                    Worker Telegram (cada 30s)          │
+└───────────────────────┬──────────────────────────────┘
+                         │
+┌───────────────────────▼──────────────────────────────┐
+│           PostgreSQL 16 + PostGIS (Docker)             │
+│  users · events · event_members · schedule_slots       │
+│  slot_signups · shifts · checkins · contributions       │
+│  notifications · telegram_links · schedule_links        │
+└────────────────────────────────────────────────────────┘
+```
+
+Ver [`DESPLIEGUE.md`](./DESPLIEGUE.md) para el detalle de cada escenario y las variables que cambian entre desarrollo y producción.
 
 ---
 
@@ -134,7 +142,7 @@ git clone https://github.com/jlujan2016/campamento-web.git
 
 ```bash
 cd campamento-api
-cp .env.example .env
+cp .env.example .env    # Windows: copy .env.example .env
 # Editar .env con tus valores reales
 ```
 
@@ -142,24 +150,22 @@ cp .env.example .env
 
 ```bash
 docker compose up -d
-# Verificar que está corriendo
 docker compose ps
-# Verificar que PostgreSQL está listo
-docker compose logs db | tail -5
+# Esperar hasta ver: Up (healthy)
 ```
 
-### 4. Aplicar las migraciones
+### 4. Correr el backend
 
 ```bash
-sqlx migrate run
+cargo run
+# Las migraciones se aplican automáticamente al arrancar
 ```
 
 ### 5. Configurar el frontend
 
 ```bash
-cd campamento-web
+cd ../campamento-web
 cp .env.example .env
-# Editar .env con la IP del backend
 npm install
 ```
 
@@ -174,16 +180,22 @@ npm install
 DB_USER=campamento
 DB_PASSWORD=tu_password_seguro
 DB_NAME=campamento_db
-DB_PORT=5432
+DB_PORT_HOST=5433
 
-# URL completa para SQLx
-DATABASE_URL=postgres://campamento:tu_password@localhost:5432/campamento_db
-
-# Autenticación JWT
-JWT_SECRET=clave_larga_aleatoria_minimo_32_caracteres
+DATABASE_URL=postgres://campamento:tu_password@localhost:5433/campamento_db
 
 # Servidor
-PORT=3000
+APP_PORT=8090
+APP_HOST=0.0.0.0
+
+# Autenticación JWT — generar con: openssl rand -hex 32
+JWT_SECRET=clave_larga_aleatoria_minimo_32_caracteres
+
+# CORS — vacío en producción (mismo origen), con valores en desarrollo
+CORS_ORIGINS=http://localhost:5174
+
+# Frontend compilado — vacío en desarrollo, con ruta en producción
+# FRONTEND_DIST=../campamento-web/dist
 
 # Telegram (opcional — si no se configura, las notificaciones se desactivan)
 TELEGRAM_BOT_TOKEN=tu_token_de_botfather
@@ -192,9 +204,12 @@ TELEGRAM_BOT_TOKEN=tu_token_de_botfather
 ### Frontend (`campamento-web/.env`)
 
 ```env
-# URL del backend (usar IP de red local para acceso desde celular)
-VITE_API_URL=http://192.168.1.XXX:3000
+VITE_API_URL=/api
+VITE_PORT=5174
+VITE_BACKEND_URL=http://localhost:8090
 ```
+
+> 📖 Tabla completa de variables y qué cambia entre desarrollo/producción en [`DESPLIEGUE.md`](./DESPLIEGUE.md#variables-de-entorno--referencia-rápida).
 
 ---
 
@@ -203,9 +218,9 @@ VITE_API_URL=http://192.168.1.XXX:3000
 El proyecto usa SQLx con migraciones versionadas en la carpeta `migrations/`. Las tablas principales son:
 
 ```
-users                 → usuarios (registrados e invitados)
+users                 → usuarios (registrados e invitados, incluye is_blocked)
 events                → campamentos/conciertos
-event_members         → relación usuario↔evento con rol
+event_members         → relación usuario↔evento con rol (participant/admin) y estado
 schedule_slots        → franjas horarias del cronograma
 slot_signups          → inscripciones a slots
 shifts                → turnos asignados (scheduled o extra)
@@ -223,7 +238,6 @@ schedule_links        → enlaces temporales públicos para el cronograma
 Para crear una nueva migración:
 ```bash
 sqlx migrate add nombre_descriptivo
-# Editar el archivo generado en migrations/
 sqlx migrate run
 ```
 
@@ -236,11 +250,10 @@ sqlx migrate run
 ```bash
 cd campamento-api
 cargo run
-# Salida esperada:
 # ✅ Conexión a la base de datos establecida
 # ✅ Migraciones aplicadas
 # 🤖 Worker de Telegram iniciado
-# 🚀 Servidor corriendo en http://0.0.0.0:3000
+# 🚀 Servidor corriendo en http://0.0.0.0:8090
 ```
 
 ### Frontend
@@ -248,8 +261,8 @@ cargo run
 ```bash
 cd campamento-web
 npm run dev
-# Abrí http://localhost:5173 en el navegador
-# O http://192.168.1.XXX:5173 desde el celular en la misma red
+# Local:   http://localhost:5174
+# Network: http://192.168.X.X:5174
 ```
 
 ---
@@ -259,75 +272,87 @@ npm run dev
 ### Autenticación (público)
 | Método | Ruta | Descripción |
 |---|---|---|
-| POST | `/auth/register` | Crear cuenta nueva |
-| POST | `/auth/login` | Iniciar sesión, recibir JWT |
-| GET | `/auth/me` | Ver mis datos (requiere JWT) |
+| POST | `/api/auth/register` | Crear cuenta nueva |
+| POST | `/api/auth/login` | Iniciar sesión (rechaza usuarios bloqueados) |
+| GET | `/api/auth/me` | Ver mis datos (requiere JWT) |
 
 ### Eventos (requiere JWT)
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/events` | Listar eventos activos |
-| POST | `/events` | Crear evento (solo super admin) |
-| GET | `/events/:id` | Ver un evento |
-| PUT | `/events/:id` | Editar evento (admin del evento) |
-| POST | `/events/:id/join` | Unirse a un evento |
-| GET | `/events/:id/members` | Ver miembros del evento |
-| POST | `/events/:id/members/:uid/withdraw` | Retirar participante (admin) |
+| GET | `/api/events` | Listar eventos — filtra por membresía (super admin ve todos) |
+| POST | `/api/events` | Crear evento (solo super admin) |
+| GET | `/api/events/:id` | Ver un evento |
+| PUT | `/api/events/:id` | Editar evento (admin del evento) |
+| POST | `/api/events/:id/join` | Unirse a un evento |
+| GET | `/api/events/:id/members` | Ver miembros del evento |
+| POST | `/api/events/:id/members/add` | Agregar usuario existente al evento (admin) |
+| POST | `/api/events/:id/members/:uid/withdraw` | Retirar participante (admin) |
 
 ### Cronograma (requiere JWT)
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/events/:id/slots` | Listar slots con disponibilidad |
-| POST | `/events/:id/slots` | Crear slot (admin) |
-| GET | `/events/:id/slots/:sid/signups` | Ver inscriptos en un slot |
-| POST | `/events/:id/signup-slots` | Anotarse en uno o varios slots |
-| POST | `/events/:id/schedule-link` | Generar enlace temporal |
-| GET | `/schedule/:token` | Ver cronograma público (sin cuenta) |
-| POST | `/schedule/:token/signup` | Anotarse sin cuenta |
+| GET | `/api/events/:id/slots` | Listar slots con disponibilidad |
+| POST | `/api/events/:id/slots` | Crear slot (admin) |
+| GET | `/api/events/:id/slots/:sid/signups` | Ver inscriptos en un slot (cualquier miembro) |
+| POST | `/api/events/:id/signup-slots` | Anotarse en uno o varios slots |
+| POST | `/api/events/:id/schedule-link` | Generar enlace temporal (admin) |
+| GET | `/api/schedule/:token` | Ver cronograma público (sin cuenta) |
+| POST | `/api/schedule/:token/signup` | Anotarse creando cuenta o como invitado |
 
 ### Turnos (requiere JWT)
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/events/:id/shifts` | Mis turnos en un evento |
-| POST | `/events/:id/shifts` | Crear turno extra espontáneo |
-| GET | `/events/:id/shifts/active` | Ver quién está presente ahora |
-| GET | `/events/:id/shifts/all` | Todos los turnos del evento (admin) |
-| GET | `/events/:id/shifts/gaps` | Turnos con vacío sin resolver (admin) |
-| POST | `/shifts/:id/checkin` | Hacer check-in (con GPS opcional) |
-| POST | `/shifts/:id/checkout` | Hacer check-out (con GPS opcional) |
-| POST | `/shifts/:id/mark-gap` | Marcar turno como vacío |
+| GET | `/api/events/:id/shifts` | Mis turnos en un evento |
+| POST | `/api/events/:id/shifts` | Crear turno extra espontáneo |
+| GET | `/api/events/:id/shifts/active` | Ver quién está presente ahora |
+| GET | `/api/events/:id/shifts/all` | Todos los turnos del evento (admin) |
+| GET | `/api/events/:id/shifts/gaps` | Turnos con vacío sin resolver (admin) |
+| POST | `/api/shifts/:id/checkin` | Hacer check-in (con GPS opcional) |
+| POST | `/api/shifts/:id/checkout` | Hacer check-out (con GPS opcional) |
+| POST | `/api/shifts/:id/mark-gap` | Marcar turno como vacío |
 
 ### Reemplazos (requiere JWT)
 | Método | Ruta | Descripción |
 |---|---|---|
-| POST | `/shifts/:id/replacement` | Solicitar reemplazo (total o parcial) |
-| PUT | `/shifts/:id/replacement/:rid` | Confirmar o rechazar reemplazo |
+| POST | `/api/shifts/:id/replacement` | Solicitar reemplazo (total o parcial) |
+| PUT | `/api/shifts/:id/replacement/:rid` | Confirmar o rechazar reemplazo |
 
 ### Aportes (requiere JWT)
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/events/:id/contribution-types` | Listar tipos de aporte |
-| POST | `/events/:id/contribution-types` | Crear tipo de aporte (admin) |
-| POST | `/events/:id/contributions` | Registrar un aporte |
-| PUT | `/contributions/:id/approve` | Aprobar/rechazar aporte (admin) |
+| GET | `/api/events/:id/contribution-types` | Listar tipos de aporte |
+| POST | `/api/events/:id/contribution-types` | Crear tipo de aporte (admin) |
+| POST | `/api/events/:id/contributions` | Registrar un aporte |
+| PUT | `/api/contributions/:id/approve` | Aprobar/rechazar aporte (admin) |
 
 ### Tramo final (requiere JWT)
 | Método | Ruta | Descripción |
 |---|---|---|
-| POST | `/events/:id/final-checkpoint` | Crear tramo final (admin) |
-| POST | `/events/:id/final-checkpoint/attend` | Registrar presencia |
+| POST | `/api/events/:id/final-checkpoint` | Crear tramo final (admin) |
+| POST | `/api/events/:id/final-checkpoint/attend` | Registrar presencia |
 
 ### Métricas y ranking (requiere JWT)
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/events/:id/metrics` | Las 4 métricas de cada persona |
-| GET | `/events/:id/ranking` | Orden oficial de la fila |
+| GET | `/api/events/:id/metrics` | Las 4 métricas de cada persona |
+| GET | `/api/events/:id/ranking` | Orden oficial de la fila — visible para todos los miembros |
+
+### Gestión de usuarios (requiere JWT, super admin)
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/api/users` | Listar usuarios (con búsqueda `?q=`) |
+| POST | `/api/users` | Crear usuario (participante o super admin) |
+| PUT | `/api/users/:id/block` | Bloquear/desbloquear (toggle) |
+| DELETE | `/api/users/:id` | Eliminar permanentemente (cascada) |
+| POST | `/api/events/:id/assign-admin` | Promover participante a admin de evento |
+| POST | `/api/events/:id/remove-admin` | Degradar admin a participante |
 
 ### Telegram (requiere JWT)
 | Método | Ruta | Descripción |
 |---|---|---|
-| POST | `/events/:id/telegram/group` | Vincular grupo de Telegram al evento |
-| POST | `/telegram/link-account` | Vincular cuenta personal de Telegram |
+| GET | `/api/events/:id/telegram/group` | Ver si el evento tiene grupo vinculado |
+| POST | `/api/events/:id/telegram/group` | Vincular grupo de Telegram al evento |
+| POST | `/api/telegram/link-account` | Vincular cuenta personal (comando `/start` del bot) |
 
 ---
 
@@ -335,37 +360,37 @@ npm run dev
 
 ```
 Super admin
-├── Crea eventos y asigna admins
-├── Ve todos los eventos y datos
+├── Crea eventos, usuarios, bloquea/elimina cuentas
+├── Ve todos los eventos y datos de la plataforma
+├── Promueve o degrada admins de evento
 └── Tiene todos los permisos de admin de evento
 
 Admin de evento
 ├── Define cronograma (slots, cupos, duración mín/máx)
 ├── Genera enlace temporal para el cronograma
+├── Agrega o retira miembros directamente
 ├── Aprueba turnos extra, aportes y slots propuestos
-├── Retira participantes (libera sus turnos automáticamente)
 ├── Define tramo final y rango horario nocturno
 ├── Ve métricas y ranking de todos los participantes
 └── Vincula el grupo de Telegram al evento
 
 Participante
-├── Se anota en slots del cronograma
+├── Ve solo los eventos donde es miembro activo
+├── Se anota en slots del cronograma y ve quién más está anotado
 ├── Solicita turnos extra espontáneos
-├── Hace check-in/out con GPS y foto opcional
+├── Hace check-in/out con GPS
 ├── Registra aportes (pendientes de aprobación)
 ├── Solicita y confirma reemplazos
-└── Ve sus propias métricas y el ranking general
+└── Ve sus propias métricas y el ranking general (transparencia total)
 
 Invitado (sin cuenta)
-└── Se anota en el cronograma via enlace temporal
-    (solo nombre y teléfono, puede completar cuenta después)
+└── Se anota en el cronograma vía enlace temporal
+    (solo nombre y teléfono — o crea cuenta completa con auto-login)
 ```
 
 ---
 
 ## 📊 Las 4 métricas de transparencia
-
-Para cada persona en cada evento el sistema calcula y muestra:
 
 | # | Métrica | Qué incluye | Uso |
 |---|---|---|---|
@@ -374,40 +399,104 @@ Para cada persona en cada evento el sistema calcula y muestra:
 | 3 | **Reales + tramo final** | Métrica 2 + horas del tramo final (si asistió) | Transparencia |
 | 4 | **Total con aportes** | Métrica 3 + bono de horas por aportes aprobados | **Orden oficial de la fila** |
 
-> **Regla de habilitación**: si el evento tiene configurado un mínimo de horas, solo pueden registrar presencia en el tramo final y aparecer en el ranking quienes hayan cumplido ese mínimo en la métrica 2 (horas reales, sin contar aportes). Esto evita que alguien "compre" su lugar solo aportando cosas sin hacer turnos reales.
+> **Regla de habilitación**: si el evento tiene configurado un mínimo de horas, solo pueden aparecer con posición en el ranking quienes hayan cumplido ese mínimo en la métrica 2 (horas reales, sin contar aportes). Esto evita que alguien "compre" su lugar solo aportando cosas sin hacer turnos reales. Quien no cumple aparece sin posición (—).
 
 ---
 
-## 🤖 Notificaciones Telegram
+## 🤖 Notificaciones Telegram — Guía completa
 
-### Configuración del bot
-1. Buscar `@BotFather` en Telegram
-2. Enviar `/newbot` y seguir los pasos
-3. Copiar el token al `.env` como `TELEGRAM_BOT_TOKEN`
-4. Agregar el bot al grupo del campamento
+Esta sección está pensada para que cualquier admin del campamento pueda configurarlo, sepa Rust o no.
 
-### Obtener el chat_id del grupo
+### ¿Qué hace y para qué sirve?
+
+El sistema tiene un bot de Telegram (un usuario automático) que manda avisos solo:
+
+- Al **grupo del campamento**: cuando se libera un turno, cuando hay un enlace nuevo para anotarse, cuando un turno queda sin cubrir
+- **En privado a cada persona**: recordatorio 1 hora antes de su turno, cuando le aprueban un aporte o un turno extra, cuando confirman un reemplazo
+
+Es **un solo bot para todos los campamentos** — no hace falta crear un bot nuevo por evento, solo conectar cada grupo de Telegram con su evento correspondiente en la app.
+
+### Cómo interactúa el bot con la app
+
+El bot nunca habla directo con el celular del participante ni con el navegador — todo pasa siempre por el backend. Hay dos caminos, en direcciones opuestas:
+
+**Camino 1 — el sistema avisa a Telegram** (lo más común: un retiro, un aporte aprobado, etc.)
+![Flujo saliente de notificaciones](./screenshots/telegram-flujo-saliente.png)
+*(diagrama: acción en la app → backend guarda el aviso → worker cada 30s lo recoge → Telegram API → llega al grupo o chat privado)*
+
+**Camino 2 — alguien le pregunta algo al bot** (por ejemplo, el comando `/chatid`)
+![Flujo entrante del comando /chatid](./screenshots/telegram-flujo-entrante.png)
+*(diagrama: alguien escribe /chatid → Telegram lo guarda esperando → el worker pregunta activamente cada 30s → el backend arma la respuesta → Telegram la entrega)*
+
+> 💡 En ambos casos el worker corre **cada 30 segundos** — por eso los avisos y las respuestas del bot nunca son instantáneos, tardan hasta medio minuto en aparecer. Es normal, no es que algo esté fallando.
+
+### Paso a paso — vincular un grupo nuevo
+
+**1. Crear el grupo de Telegram** del campamento (o usar uno que ya exista).
+
+**2. Agregar el bot al grupo.** Buscá por su nombre de usuario exacto:
 ```
-https://api.telegram.org/bot{TOKEN}/getUpdates
+@campamento_turnos_bot
 ```
-Buscar el campo `"chat" → "id"` (número negativo para grupos).
+Agregalo como cualquier otro miembro — no hace falta que sea administrador del grupo.
 
-### Vincular via API
-```bash
-# Vincular grupo al evento
-POST /events/:id/telegram/group
-{ "telegram_chat_id": "-1001234567890" }
+**3. Conseguir el Chat ID del grupo** — es un número (siempre negativo) que identifica a ese grupo específico. La forma más simple:
 
-# Vincular cuenta personal
-POST /telegram/link-account
-{ "telegram_chat_id": "123456789" }
+```
+Dentro del grupo, escribí:  /chatid
 ```
 
-### Eventos que disparan notificaciones
+Esperá hasta 30 segundos. El bot responde directamente en el grupo con el número, algo así:
+
+```
+🆔 El Chat ID de este grupo ("Campamento Rubén Blades") es:
+
+-1001234567890
+
+Copiá ese número y pegalo en la app, en
+Configuración del evento → Notificaciones Telegram → Vincular.
+```
+
+**4. Pegar el Chat ID en la app.** Entrá al evento como admin → **Configuración** → tarjeta "Notificaciones Telegram" → pegá el número → **Vincular**.
+
+Listo. Desde ahora, cualquier hueco liberado, enlace nuevo, o aviso grupal llega a ese chat.
+
+### Vincular tu cuenta personal (para recibir avisos privados)
+
+Cada participante que quiera recibir sus propios recordatorios (turno en 1 hora, aporte aprobado, etc.) debe:
+
+```
+1. Buscar al bot: @campamento_turnos_bot
+2. Abrir un chat privado con él
+3. Escribir: /start
+```
+
+Con eso queda vinculada su cuenta automáticamente — no necesita pegar ningún número, a diferencia del grupo.
+
+### Troubleshooting — no me llega ningún mensaje
+
+Revisá en este orden:
+
+| Síntoma | Causa probable | Solución |
+|---|---|---|
+| El bot no responde a `/chatid` | El bot no está en el grupo | Verificá que lo agregaste como miembro |
+| El bot no responde a `/chatid` | El backend no está corriendo | Revisá la consola: debe decir "Worker de notificaciones iniciado" |
+| Vinculé el grupo pero no llegan avisos | El chat_id se vinculó al evento equivocado | Configuración muestra el badge "Vinculado ✓" — confirmá que estás en el evento correcto |
+| Retiré a alguien y no llegó nada | Esa persona no tenía turnos **futuros** | Es esperado: solo se notifica cuando se libera al menos un turno con fecha posterior a ahora |
+| Los mensajes tardan | Es normal | El worker revisa cada 30 segundos, no es instantáneo |
+| El chat_id dejó de funcionar de golpe | El grupo se convirtió en "supergrupo" | Ver nota abajo — hay que re-vincular con el chat_id nuevo |
+
+### ⚠️ Nota sobre supergrupos
+
+Telegram tiene dos tipos de grupo: "grupo" normal y "supergrupo" (con más funciones, como historial visible para nuevos miembros). Cuando un grupo crece o se activan ciertas configuraciones, Telegram lo convierte automáticamente en supergrupo — **y el Chat ID cambia** (empieza a tener el prefijo `-100`).
+
+Si las notificaciones que venían funcionando dejan de llegar de un día para el otro sin que nadie tocó nada en la app, es la causa más probable. La solución es simple: escribir `/chatid` de nuevo en el grupo y volver a pegar el número actualizado en Configuración.
+
+### Referencia técnica — eventos que disparan notificaciones
 
 | Evento | Destino | Cuándo |
 |---|---|---|
-| Hueco liberado por retiro | Grupo | Admin retira a un participante |
+| Hueco liberado por retiro | Grupo | Admin retira a un participante con turnos futuros |
 | Nuevo enlace de cronograma | Grupo | Admin genera un schedule_link |
 | Vacío sin resolver | Grupo | Turno pasa a `gap_unresolved` |
 | Turno extra aprobado | Privado | Admin aprueba el turno extra |
@@ -417,22 +506,35 @@ POST /telegram/link-account
 
 El worker procesa la cola cada 30 segundos — si Telegram está caído, reintenta en el siguiente ciclo sin bloquear el servidor.
 
+### Referencia técnica — vincular vía API (sin usar la app)
+
+```bash
+# Vincular grupo al evento
+POST /api/events/:id/telegram/group
+{ "telegram_chat_id": "-1001234567890" }
+
+# Ver si un evento ya tiene grupo vinculado
+GET /api/events/:id/telegram/group
+
+# Vincular cuenta personal
+POST /api/telegram/link-account
+{ "telegram_chat_id": "123456789" }
+```
+
 ---
 
 ## 📱 PWA — Instalación en celular
 
-### Android (Chrome)
-1. Abrí `http://IP_DEL_SERVIDOR:5173` en Chrome
-2. Tocá los tres puntos → "Agregar a pantalla de inicio"
-3. Confirmá — la app aparece como icono en el home
+**En producción** (recomendado — HTTPS habilita GPS también en iOS):
 
-### iOS (Safari)
-1. Abrí `http://IP_DEL_SERVIDOR:5173` en Safari
-2. Tocá el botón de compartir (cuadrado con flecha)
-3. "Agregar a pantalla de inicio"
-4. Confirmá
+1. Abrí `https://appconcert.online` en el celular
+2. Android/Chrome: menú (⋮) → "Agregar a pantalla de inicio"
+3. iOS/Safari: botón compartir → "Agregar a pantalla de inicio"
 
-> Para acceso desde el celular, asegurate de que el celular y la PC que corre el servidor estén en la **misma red WiFi**.
+**En desarrollo** (misma red WiFi que la PC con Vite):
+
+1. Abrí `http://IP_DEL_SERVIDOR:5174` — mismos pasos de instalación
+2. ⚠️ En iOS con HTTP el GPS no funciona (requiere HTTPS) — usar producción para probar GPS en iPhone
 
 ---
 
@@ -443,18 +545,16 @@ El worker procesa la cola cada 30 segundos — si Telegram está caído, reinten
 ```
 campamento-api/
 ├── migrations/                  # Migraciones SQL versionadas
-│   ├── 001_create_initial_schema.sql
-│   └── 002_fix_numeric_to_float.sql
 ├── src/
 │   ├── main.rs                  # Punto de entrada, configura servidor y worker
 │   ├── config.rs                # Lee variables de entorno
 │   ├── db.rs                    # Pool de conexiones a PostgreSQL
 │   ├── errors.rs                # Tipos de error y respuestas HTTP
 │   ├── auth.rs                  # JWT y hash de contraseñas (Argon2)
-│   ├── telegram.rs              # Cliente de la API de Telegram
+│   ├── telegram.rs              # Cliente de la API de Telegram + comando /chatid
 │   ├── worker.rs                # Worker de notificaciones (corre cada 30s)
 │   ├── models/
-│   │   ├── user.rs
+│   │   ├── user.rs              # incluye is_blocked
 │   │   ├── event.rs
 │   │   ├── schedule.rs
 │   │   ├── shift.rs
@@ -462,19 +562,21 @@ campamento-api/
 │   │   ├── contribution.rs
 │   │   └── metrics.rs
 │   └── routes/
-│       ├── mod.rs               # Router principal + CORS
+│       ├── mod.rs               # Router principal + CORS + sirve frontend en prod
 │       ├── health.rs
 │       ├── auth.rs
-│       ├── events.rs
+│       ├── events.rs            # incluye add_member, filtro por membresía
 │       ├── schedule.rs
 │       ├── shifts.rs
 │       ├── replacements.rs
 │       ├── contributions.rs
 │       ├── metrics.rs
-│       └── telegram.rs
+│       ├── users.rs             # gestión de usuarios, assign/remove admin
+│       └── telegram.rs          # link_group, get_group_link
 ├── Cargo.toml
 ├── docker-compose.yml
 ├── .env.example
+├── DESPLIEGUE.md                # Guía de despliegue (dev, otra app, Cloudflare)
 └── .gitignore
 ```
 
@@ -483,32 +585,41 @@ campamento-api/
 ```
 campamento-web/
 ├── public/
-│   └── manifest.json            # Configuración PWA
+│   └── manifest.json
 ├── src/
 │   ├── api/
-│   │   ├── client.ts            # Cliente HTTP base con JWT automático
+│   │   ├── client.ts            # URL /api relativa, JWT automático
 │   │   ├── auth.ts
 │   │   ├── events.ts
-│   │   └── shifts.ts
+│   │   ├── shifts.ts
+│   │   └── admin.ts             # eventos, slots, aprobaciones, usuarios, telegram
 │   ├── components/
-│   │   ├── BottomNav.tsx        # Navegación inferior (móvil)
-│   │   ├── CheckinButton.tsx    # Botón de check-in/out con GPS
-│   │   ├── MetricsCard.tsx      # Tarjeta de las 4 métricas
-│   │   └── ShiftCard.tsx        # Tarjeta de turno individual
+│   │   ├── BottomNav.tsx
+│   │   ├── CheckinButton.tsx
+│   │   ├── MetricsCard.tsx
+│   │   ├── ShiftCard.tsx
+│   │   ├── SlotPicker.tsx       # con acordeón de inscriptos
+│   │   ├── CreateSlotModal.tsx
+│   │   ├── ContributionTypeModal.tsx
+│   │   ├── CreateUserModal.tsx
+│   │   └── AddMemberModal.tsx
 │   ├── hooks/
-│   │   └── useAuth.ts           # Context y hook de autenticación
+│   │   └── useAuth.ts
 │   ├── pages/
 │   │   ├── LoginPage.tsx
 │   │   ├── RegisterPage.tsx
-│   │   ├── DashboardPage.tsx    # Dashboard del participante
-│   │   ├── AdminPage.tsx        # Panel del admin (ranking + miembros)
-│   │   └── ScheduleLinkPage.tsx # Vista pública del enlace temporal
+│   │   ├── DashboardPage.tsx
+│   │   ├── AdminPage.tsx        # ranking + miembros + promover/retirar
+│   │   ├── UsersPage.tsx        # gestión de usuarios (super admin)
+│   │   ├── RankingPage.tsx      # ranking para participantes
+│   │   ├── SettingsPage.tsx     # incluye vinculación Telegram
+│   │   └── ScheduleLinkPage.tsx # crea cuenta o invitado, auto-login
 │   ├── types/
-│   │   └── index.ts             # Tipos TypeScript de la API
-│   ├── main.tsx                 # Punto de entrada, rutas
-│   └── index.css                # Tailwind + componentes globales
-├── index.html                   # Configura PWA meta tags
-├── vite.config.ts
+│   │   └── index.ts
+│   ├── main.tsx
+│   └── index.css
+├── index.html
+├── vite.config.ts                # puerto 5174, proxy /api → :8090
 ├── .env.example
 └── .gitignore
 ```
@@ -517,14 +628,17 @@ campamento-web/
 
 ## 🗺️ Próximos pasos
 
-- [ ] Pantalla de aprobaciones para el admin (turnos extra, aportes pendientes)
-- [ ] Vista del cronograma completo del evento
+- [ ] Validación de check-in por proximidad al horario del turno
+- [ ] Estado "incomplete" si el check-out ocurre antes de un % mínimo del turno
+- [ ] Fórmula sugerida ("calcular sugerencia") para el mínimo de horas totales
+- [ ] Vista calendario del cronograma (estilo Google Calendar)
 - [ ] Subida de foto en check-in (integración con almacenamiento S3-compatible)
 - [ ] Adaptación del layout para escritorio (`md:` breakpoints en Tailwind)
-- [ ] Deploy a producción (backend en Fly.io o Railway, frontend en Vercel)
 - [ ] Integración con WhatsApp Business API (como alternativa a Telegram)
 - [ ] Modo offline básico (service worker para ver datos sin conexión)
-- [ ] Tests unitarios del backend (Rust tiene un framework de testing integrado)
+- [ ] Apps nativas iOS/Android (Capacitor) + landing page
+- [ ] Fondo animado Three.js en el login (rama `feat/login-concert-background`)
+- [ ] Tests unitarios del backend
 
 ---
 
