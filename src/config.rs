@@ -7,6 +7,7 @@ pub struct Config {
     pub cors_origins: Vec<String>,          // lista separada por comas en .env
     pub telegram_bot_token: Option<String>,
     pub frontend_dist: Option<String>,  // ← nuevo: ruta a dist/ del frontend
+    pub public_url: String,
 }
 
 impl Config {
@@ -48,6 +49,8 @@ impl Config {
         // En producción: ../campamento-web/dist o ruta absoluta
         // Si no está definida, no sirve archivos estáticos (solo API)
         let frontend_dist = std::env::var("FRONTEND_DIST").ok();
+        let public_url = std::env::var("PUBLIC_URL")
+            .unwrap_or_else(|_| "http://localhost:5174".to_string());
 
         Self {
             database_url,
@@ -57,6 +60,7 @@ impl Config {
             cors_origins,
             telegram_bot_token,
             frontend_dist,
+            public_url,
         }
     }
 }

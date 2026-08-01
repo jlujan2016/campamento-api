@@ -350,6 +350,73 @@ pub async fn create_schedule_link(
     Ok((StatusCode::CREATED, Json(link)))
 }
 
+// POST /events/:id/schedule-link/:link_id/notify — avisar al grupo de Telegram
+// Separado de la creación del enlace: el admin decide CUÁNDO avisar
+pub async fn notify_schedule_link(
+    State(state): State<AuthState>,
+    Extension(claims): Extension<Claims>,
+    Path((event_id, link_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+
+    let user_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| AppError::Unauthorized("Token inválido".to_string()))?;
+
+    verify_event_admin(&state.pool, event_id, user_id, claims.is_super_admin).await?;
+
+    // Verificamos que el enlace existe, pertenece a este evento y no expiró
+    let link = sqlx::query!(
+        r#"
+        SELECT token, expires_at FROM schedule_links
+        WHERE id = $1 AND event_id = $2
+        "#,
+        link_id, event_id
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Enlace no encontrado".to_string()))?;
+
+    if link.expires_at < Utc::now() {
+        return Err(AppError::Validation(
+            "Este enlace ya expiró — generá uno nuevo".to_string()
+        ));
+    }
+
+    // Verificamos que el evento tiene grupo de Telegram vinculado
+    let has_group = sqlx::query!(
+        r#"
+        SELECT id FROM telegram_links
+        WHERE event_id = $1 AND link_type = 'group'
+        "#,
+        event_id
+    )
+    .fetch_optional(&state.pool)
+    .await?;
+
+    if has_group.is_none() {
+        return Err(AppError::Validation(
+            "Este evento no tiene un grupo de Telegram vinculado. \
+             Vinculalo desde Configuración primero.".to_string()
+        ));
+    }
+
+    let full_url = format!("{}/s/{}", state.public_url, link.token);
+
+    sqlx::query!(
+        r#"
+        INSERT INTO notifications (event_id, type, payload)
+        VALUES ($1, 'new_schedule_link', $2)
+        "#,
+        event_id,
+        serde_json::json!({ "link": full_url })
+    )
+    .execute(&state.pool)
+    .await?;
+
+    Ok(Json(serde_json::json!({
+        "message": "Se avisó al grupo de Telegram"
+    })))
+}
+
 // GET /schedule/:token — vista pública del cronograma (sin cuenta)
 pub async fn public_schedule(
     State(state): State<AuthState>,

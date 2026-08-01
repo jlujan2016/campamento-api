@@ -51,6 +51,7 @@ async fn main() {
         config.jwt_secret.clone(),
         config.cors_origins.clone(),
         config.frontend_dist.clone(),
+        config.public_url.clone(),
     );
 
     let addr = format!("{}:{}", config.host, config.port);

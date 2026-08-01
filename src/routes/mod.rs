@@ -26,11 +26,13 @@ pub fn create_router(
     pool: PgPool,
     jwt_secret: String,
     cors_origins: Vec<String>,
-    frontend_dist: Option<String>, 
+    frontend_dist: Option<String>,
+    public_url: String, 
 ) -> Router {
     let auth_state = AuthState {
         pool: pool.clone(),
         jwt_secret,
+        public_url,
     };
 
     let public_routes = Router::new()
@@ -53,6 +55,7 @@ pub fn create_router(
             get(schedule::list_slot_signups))
         .route("/events/:id/signup-slots", post(schedule::signup_slots))
         .route("/events/:id/schedule-link", post(schedule::create_schedule_link))
+        .route("/events/:id/schedule-link/:link_id/notify", post(schedule::notify_schedule_link))
         .route("/events/:id/shifts",
             get(shifts::list_my_shifts).post(shifts::create_extra_shift))
         .route("/events/:id/shifts/active", get(shifts::active_presence))

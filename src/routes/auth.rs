@@ -19,6 +19,7 @@ use crate::{
 pub struct AuthState {
     pub pool: PgPool,
     pub jwt_secret: String,
+    pub public_url: String, 
 }
 
 // POST /auth/register
